@@ -11,56 +11,58 @@ from selenium.webdriver.support import expected_conditions as EC
 import telebot
 from telebot import types
 
-# === Configuración general ===
+# === CONFIGURACIÓN ===
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8043272067:AAGdUtbRpnd-NNaKhcJdJkpWQRyvLT1XKZw")
 URL_CONSULTA = "https://mktper.enel.com/app-web-recibo/consulta-tu-recibo"
 URL_DESCARGA = "https://mktper.enel.com/app-web-recibo/descargar-recibo"
 bot = telebot.TeleBot(TOKEN)
 user_data = {}
 
-# === Función para iniciar Selenium ===
+# === INICIAR SELENIUM HEADLESS ===
 def iniciar_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920x1080")
     return webdriver.Chrome(options=options)
 
-# === /start ===
-@bot.message_handler(commands=["start"])
-def start(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("🔎 Consultar Recibo")
-    btn2 = types.KeyboardButton("ℹ️ Ayuda")
-    markup.add(btn1, btn2)
-    bot.send_message(message.chat.id, "👋 Bienvenido al Bot de Enel Perú\nElige una opción:", reply_markup=markup)
+# === MENÚ PRINCIPAL ===
+@bot.message_handler(commands=["start", "menu"])
+def mostrar_menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    markup.add(types.KeyboardButton("🔎 Consultar Recibo"), types.KeyboardButton("ℹ️ Ayuda"))
+    bot.send_message(message.chat.id, "👋 Bienvenido al *Bot de Enel Perú*", parse_mode="Markdown")
+    bot.send_message(message.chat.id, "Selecciona una opción del menú:", reply_markup=markup)
 
-# === Ayuda ===
+# === AYUDA ===
 @bot.message_handler(func=lambda m: m.text == "ℹ️ Ayuda")
 def ayuda(message):
     texto = (
-        "📄 Este bot te permite consultar y descargar tu recibo de Enel Perú.\n"
-        "1. Pulsa '🔎 Consultar Recibo'\n"
-        "2. Escribe tu número de suministro\n"
-        "3. Ingresa el CAPTCHA que aparece\n"
-        "✅ ¡Y recibirás tu recibo en PDF!"
+        "🧾 *¿Cómo usar el bot de Enel?*\n\n"
+        "1️⃣ Pulsa en '🔎 Consultar Recibo'\n"
+        "2️⃣ Ingresa tu número de suministro\n"
+        "3️⃣ Ingresa el código CAPTCHA que aparece\n"
+        "4️⃣ El bot te enviará tu recibo en PDF\n\n"
+        "📬 Si tienes problemas, escribe /start para volver al menú."
     )
-    bot.send_message(message.chat.id, texto)
+    bot.send_message(message.chat.id, texto, parse_mode="Markdown")
 
-# === Consultar Recibo ===
+# === CONSULTA DE RECIBO ===
 @bot.message_handler(func=lambda m: m.text == "🔎 Consultar Recibo")
 def solicitar_suministro(message):
-    bot.send_message(message.chat.id, "✍️ Por favor, ingresa tu número de suministro:")
+    bot.send_message(message.chat.id, "📌 Por favor, escribe tu *número de suministro*:", parse_mode="Markdown")
     bot.register_next_step_handler(message, recibir_suministro)
 
-# === Ingreso de suministro ===
+# === INGRESO DE SUMINISTRO ===
 def recibir_suministro(message):
     suministro = message.text.strip()
-    if not suministro.isdigit():
-        bot.send_message(message.chat.id, "⚠️ Número inválido. Solo números.")
+    if not suministro.isdigit() or len(suministro) < 7:
+        bot.send_message(message.chat.id, "⚠️ El número de suministro debe contener solo dígitos y tener al menos 7 caracteres.")
         return
 
-    bot.send_message(message.chat.id, f"🔎 Buscando recibo para suministro: {suministro}...")
+    bot.send_message(message.chat.id, f"🔍 Buscando recibo para suministro *{suministro}*...", parse_mode="Markdown")
     driver = iniciar_driver()
     driver.get(URL_CONSULTA)
 
@@ -72,8 +74,8 @@ def recibir_suministro(message):
         input_sum.send_keys(suministro)
         input_sum.send_keys(Keys.RETURN)
         time.sleep(2)
-    except:
-        bot.send_message(message.chat.id, "❌ No se pudo ingresar el número de suministro.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error al ingresar el número de suministro: {e}")
         driver.quit()
         return
 
@@ -81,25 +83,27 @@ def recibir_suministro(message):
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, "captcha")))
         captcha_img = driver.find_element(By.XPATH, "//img[contains(@class, 'captcha-image')]")
         src = captcha_img.get_attribute("src")
+
         if src.startswith("data:image"):
             header, encoded = src.split(",", 1)
             image_data = base64.b64decode(encoded)
         else:
             image_data = requests.get(src).content
 
-        bot.send_photo(message.chat.id, image_data, caption="✍️ Ingresa el código CAPTCHA que aparece:")
+        bot.send_photo(message.chat.id, image_data, caption="✍️ Por favor, escribe el código CAPTCHA que aparece:")
         user_data[message.chat.id] = {"driver": driver, "suministro": suministro}
         bot.register_next_step_handler(message, recibir_captcha)
-    except:
-        bot.send_message(message.chat.id, "❌ Error al obtener el CAPTCHA.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ No se pudo obtener el CAPTCHA: {e}")
         driver.quit()
 
-# === Ingreso de CAPTCHA ===
+# === INGRESO DE CAPTCHA ===
 def recibir_captcha(message):
     captcha = message.text.strip()
     session = user_data.get(message.chat.id)
+
     if not session:
-        bot.send_message(message.chat.id, "⚠️ Sesión no encontrada. Escribe /start para comenzar de nuevo.")
+        bot.send_message(message.chat.id, "⚠️ No se encontró una sesión activa. Escribe /start para comenzar de nuevo.")
         return
 
     driver = session["driver"]
@@ -119,7 +123,7 @@ def recibir_captcha(message):
         nro_sum = form.find_element(By.NAME, "nroSuministro").get_attribute("value")
         tipo_serv = form.find_element(By.NAME, "tipoServElectrico").get_attribute("value")
 
-        # Copiar cookies desde Selenium a requests
+        # Transferir cookies a sesión requests
         s = requests.Session()
         for cookie in driver.get_cookies():
             s.cookies.set(cookie['name'], cookie['value'])
@@ -130,23 +134,24 @@ def recibir_captcha(message):
             "nroSuministro": nro_sum,
             "tipoServElectrico": tipo_serv
         }
+
         r = s.post(URL_DESCARGA, data=payload)
 
         if r.status_code == 200 and "application/pdf" in r.headers.get("Content-Type", ""):
             bot.send_document(message.chat.id, r.content, visible_file_name=f"Recibo_{suministro}.pdf")
-            bot.send_message(message.chat.id, "✅ Aquí está tu recibo.")
+            bot.send_message(message.chat.id, "✅ ¡Recibo descargado exitosamente!")
         else:
-            bot.send_message(message.chat.id, "❌ No se pudo descargar el recibo.")
-    except:
-        bot.send_message(message.chat.id, "⚠️ Error al validar el CAPTCHA o descargar el recibo.")
+            bot.send_message(message.chat.id, "❌ No se pudo descargar el recibo. Intenta nuevamente.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ Error al procesar el CAPTCHA o descargar el recibo: {e}")
     finally:
         driver.quit()
         user_data.pop(message.chat.id, None)
 
-# === Inicio del bot ===
+# === INICIO DEL BOT ===
 def main():
-    print("🤖 Bot Enel iniciado correctamente.")
-    bot.infinity_polling()
+    print("✅ Bot Enel iniciado. Esperando mensajes...")
+    bot.infinity_polling(timeout=60, long_polling_timeout=60)
 
 if __name__ == "__main__":
     main()
